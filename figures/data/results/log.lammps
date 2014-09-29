@@ -1,0 +1,243 @@
+LAMMPS (30 Aug 2012)
+include         in.fedosov-parameters
+# DPD example
+# Poiseuille flow with parameters from 
+# J.Chem.Phys 132, 144103 (2010)
+
+# the simulation produces spatially averages 
+# vy.av (velocity), rho.av (density), simtemp.av (temperature), sxy.av (shear stress)
+#echo           both
+units		lj
+# tolerance
+#variable       EPSILON 1e-8
+variable        ndim  equal 3
+variable        number_density equal 3  # Table 1
+variable        xsize equal 33   # p. 4
+variable        ysize equal 60
+if "${ndim}==3" then "variable        zsize equal 3"
+variable        zsize equal 3
+variable        kb equal 1.0 
+variable        T equal 1.0/${kb} # Table 1
+variable        T equal 1.0/1 variable        cutoff equal 1.0 # Table 1
+variable        cutoff_cons equal 1.0 # eq. (5)
+variable        sigma equal 3.0  # Table 1
+variable        gamma equal ${sigma}^2/(2*${T}*${kb}) # eq. (6)
+variable        gamma equal 3^2/(2*${T}*${kb}) variable        gamma equal 3^2/(2*1*${kb}) variable        gamma equal 3^2/(2*1*1) variable        sigma delete
+print           "gamma: ${gamma} (must be 4.5)" # Table 1
+gamma: 4.5 (must be 4.5)
+
+variable        adpd     equal 25 # Table 1
+variable        m_power index  0.25 # Table 1
+variable        pmass    equal 1.0 # TODO:
+
+variable gy equal 0.01 # from 0.025 to 0.25  (p.6)
+
+timestep	0.01 # TODO:
+# number of timesteps
+variable ntime equal 800000
+variable gamma equal 1.0
+dimension       ${ndim}
+dimension       3
+atom_style	bond
+pair_style hybrid/overlay lj/cut 0.75 dpd ${T} ${cutoff} 928948
+pair_style hybrid/overlay lj/cut 0.75 dpd 1 ${cutoff} 928948
+pair_style hybrid/overlay lj/cut 0.75 dpd 1 1 928948
+communicate	single vel yes
+
+boundary     p p p
+lattice fcc 4.0
+Lattice spacing in x,y,z = 1 1 1
+
+read_data ./data.in/fluid.groovedE
+  0 = max bonds/atom
+  orthogonal box = (-100 -1.5 -11.75) to (100 1.5 11.75)
+  6 by 1 by 1 MPI processor grid
+  48996 atoms
+  0 bonds
+  0 = max # of 1-2 neighbors
+  0 = max # of 1-3 neighbors
+  0 = max # of 1-4 neighbors
+  1 = max # of special neighbors
+
+mass		* ${pmass}
+mass		* 1
+
+pair_coeff * * dpd  18.75 4.5
+pair_coeff 1 * dpd  9.68  4.5
+pair_coeff 2 * dpd  9.68  4.5
+pair_coeff 3 * dpd  9.68  4.5
+
+
+pair_coeff 1 * lj/cut 0.25 0.5 0.5
+pair_coeff 2 * lj/cut 0.5 0.5 0.5
+pair_coeff 3 * lj/cut 0.5 1.0 1.0
+
+
+bond_style fene
+bond_coeff * 6.0 1.5 0.0 0.0
+
+neighbor	0.5 bin
+neigh_modify    delay 0 every 1
+
+
+group        wall type 1 type 2 type 3
+8196 atoms in group wall
+group        flow type 4 type 5
+40800 atoms in group flow
+
+velocity     wall set 0.0 0.0 0.0
+fix	     fwall wall setforce 0.0 0.0 0.0
+
+
+fix		1 all nve
+
+variable        Nfreq   equal  ${ntime}
+variable        Nfreq   equal  800000
+variable        Nrepeat equal  round(0.9*${ntime})
+variable        Nrepeat equal  round(0.9*800000)
+fix av_vx flow ave/spatial 1 ${Nrepeat} ${Nfreq} z center 0.5 x center 0.5 vx file "vx.grooved"
+fix av_vx flow ave/spatial 1 720000 ${Nfreq} z center 0.5 x center 0.5 vx file "vx.grooved"
+fix av_vx flow ave/spatial 1 720000 800000 z center 0.5 x center 0.5 vx file "vx.grooved"
+fix av_vz flow ave/spatial 1 ${Nrepeat} ${Nfreq} z center 0.5 x center 0.5 vz file "vz.grooved"
+fix av_vz flow ave/spatial 1 720000 ${Nfreq} z center 0.5 x center 0.5 vz file "vz.grooved"
+fix av_vz flow ave/spatial 1 720000 800000 z center 0.5 x center 0.5 vz file "vz.grooved"
+fix av_rho all ave/spatial 1 ${Nrepeat} ${Nfreq} z center 0.5 x center 0.5 density/number file "rho.grooved"
+fix av_rho all ave/spatial 1 720000 ${Nfreq} z center 0.5 x center 0.5 density/number file "rho.grooved"
+fix av_rho all ave/spatial 1 720000 800000 z center 0.5 x center 0.5 density/number file "rho.grooved"
+
+# simulation temperature (do not use vy, flow goes in this direction)
+variable simtemp atom mass*vz^2
+fix av_temp all ave/spatial 1 ${Nrepeat} ${Nfreq} z center 0.5 x center 0.5 v_simtemp file "simtemp.grooved"
+fix av_temp all ave/spatial 1 720000 ${Nfreq} z center 0.5 x center 0.5 v_simtemp file "simtemp.grooved"
+fix av_temp all ave/spatial 1 720000 800000 z center 0.5 x center 0.5 v_simtemp file "simtemp.grooved"
+
+# stresses are in units of pressure*volume must be divided by per-atom
+# volume to have units of stress (pressue); components of the stress
+# are in the following order xx(1), yy(2), zz(3), xy(4), xz(5), yz(6)
+compute stress flow stress/atom
+variable stress_pressure atom c_stress[5]*${number_density}
+variable stress_pressure atom c_stress[5]*3
+variable pressure atom -(c_stress[1]+c_stress[2]+c_stress[3])/3*${number_density} 
+variable pressure atom -(c_stress[1]+c_stress[2]+c_stress[3])/3*3 
+fix av_zx_stress flow ave/spatial 1 ${Nrepeat} ${Nfreq} z center 0.5 x center 0.5 v_stress_pressure file "szx.grooved"
+fix av_zx_stress flow ave/spatial 1 720000 ${Nfreq} z center 0.5 x center 0.5 v_stress_pressure file "szx.grooved"
+fix av_zx_stress flow ave/spatial 1 720000 800000 z center 0.5 x center 0.5 v_stress_pressure file "szx.grooved"
+fix comPressure flow ave/spatial 1 ${Nrepeat} ${Nfreq} z center 0.5 x center 0.5 v_pressure file "pressure.grooved"
+fix comPressure flow ave/spatial 1 720000 ${Nfreq} z center 0.5 x center 0.5 v_pressure file "pressure.grooved"
+fix comPressure flow ave/spatial 1 720000 800000 z center 0.5 x center 0.5 v_pressure file "pressure.grooved"
+
+
+
+variable fbody atom mass*${gy}
+variable fbody atom mass*0.010000000000000000208
+fix body_force flow addforce  v_fbody 0.0 0.0 
+thermo          10000
+
+
+run		${ntime}
+run		800000
+WARNING: Use special bonds = 0,1,1 with bond style fene (bond_fene.cpp:187)
+Memory usage per processor = 21.5097 Mbytes
+Step Temp E_pair E_mol TotEng Press 
+       0            0    16.356891            0    16.356891    203.86786 
+   10000   0.88883696    16.758543            0    18.091771    205.39903 
+   20000   0.90124954    16.755081            0    18.106927    205.56226 
+   30000   0.89530302    16.761008            0    18.103935    205.53478 
+   40000   0.90992997    16.760184            0    18.125051    205.41482 
+   50000   0.90627998    16.761703            0    18.121095    205.39253 
+   60000   0.89740613    16.762166            0    18.108248     205.3712 
+   70000   0.89619519    16.764016            0    18.108281    205.57301 
+   80000   0.89726034    16.755009            0    18.100872      205.342 
+   90000    0.9003707    16.762174            0    18.112703    205.40243 
+  100000   0.89465788     16.75489            0    18.096849    205.42294 
+  110000   0.90634383    16.759072            0     18.11856    205.48928 
+  120000   0.90767411    16.754211            0    18.115695    205.49639 
+  130000   0.90442871    16.760125            0     18.11674    205.34933 
+  140000   0.90362655     16.75811            0    18.113522    205.52566 
+  150000   0.89691473    16.760519            0    18.105864    205.50528 
+  160000   0.90419823    16.761165            0    18.117435    205.55888 
+  170000   0.90407833      16.7638            0     18.11989    205.45004 
+  180000   0.90113135    16.756759            0    18.108429     205.4791 
+  190000   0.89986748    16.753931            0    18.103705    205.43106 
+  200000   0.89884183    16.756644            0    18.104879    205.44093 
+  210000   0.89864495    16.756828            0    18.104768     205.5085 
+  220000   0.90268401    16.762229            0    18.116227    205.46767 
+  230000    0.9064786    16.753044            0    18.112734     205.3993 
+  240000    0.9012301    16.757621            0    18.109438    205.53383 
+  250000    0.9036239    16.754966            0    18.110374    205.49546 
+  260000   0.89906465    16.759621            0    18.108191    205.26796 
+  270000   0.89761407    16.757465            0    18.103859    205.40166 
+  280000   0.90630843    16.761408            0    18.120843    205.51313 
+  290000   0.89772123    16.752236            0    18.098791     205.4924 
+  300000   0.90085818    16.760799            0    18.112058    205.56446 
+  310000   0.90144976    16.762583            0     18.11473    205.53239 
+  320000   0.90365359    16.760086            0    18.115538    205.53243 
+  330000   0.90046309     16.75759            0    18.108257    205.46552 
+  340000   0.89765954    16.757167            0    18.103629    205.44277 
+  350000   0.90292886    16.757439            0    18.111804    205.38226 
+  360000   0.89822361    16.754877            0    18.102185    205.41939 
+  370000   0.90231445    16.759189            0    18.112633    205.45819 
+  380000   0.89989669    16.757034            0    18.106852    205.32654 
+  390000   0.89578874     16.75929            0    18.102946    205.28232 
+  400000   0.90037658    16.758026            0    18.108564    205.42369 
+  410000   0.89942898    16.754072            0    18.103188     205.4468 
+  420000   0.89696742     16.75841            0    18.103834    205.52859 
+  430000     0.898743    16.758111            0    18.106198     205.5168 
+  440000   0.90214906    16.753688            0    18.106884    205.36451 
+  450000   0.90206819    16.759334            0    18.112409    205.52009 
+  460000   0.90282664    16.761428            0    18.115641    205.52195 
+  470000    0.8937195    16.759369            0    18.099921    205.48758 
+  480000   0.90049607    16.762958            0    18.113675     205.3664 
+  490000   0.89986074    16.761228            0    18.110991    205.47698 
+  500000   0.90054505     16.75899            0     18.10978    205.54626 
+  510000   0.89582572    16.758297            0    18.102008    205.43118 
+  520000   0.90028052    16.756035            0    18.106428    205.32624 
+  530000   0.89743508    16.758273            0    18.104398    205.35591 
+  540000   0.90398529    16.757552            0    18.113502    205.45438 
+  550000   0.89563817    16.753029            0    18.096459    205.34463 
+  560000   0.89568647    16.759538            0     18.10304    205.37527 
+  570000    0.8994113    16.761257            0    18.110347    205.46208 
+  580000   0.89773713    16.759639            0    18.106217    205.39952 
+  590000   0.89673885     16.75838            0    18.103461    205.38715 
+  600000   0.90204691    16.758376            0    18.111419    205.31794 
+  610000   0.89638029    16.757411            0    18.101954    205.43025 
+  620000   0.90084419     16.76088            0    18.112119    205.37649 
+  630000   0.90029968    16.761252            0    18.111674    205.38938 
+  640000     0.899084    16.757754            0    18.106353    205.53413 
+  650000   0.89782835    16.762511            0    18.109226    205.50129 
+  660000   0.89633523    16.757447            0    18.101922    205.41995 
+  670000   0.89222438    16.761779            0    18.100088    205.45593 
+  680000   0.89895863    16.755084            0    18.103494     205.2783 
+  690000   0.90418145    16.752393            0    18.108638    205.52456 
+  700000   0.90173532    16.756549            0    18.109125    205.31571 
+  710000   0.90353152     16.75829            0     18.11356    205.45162 
+  720000   0.89868328    16.752581            0    18.100578    205.44757 
+  730000   0.90045461    16.758857            0    18.109512     205.5054 
+  740000   0.89781697    16.755459            0    18.102157    205.42056 
+  750000   0.90428784    16.759652            0    18.116056    205.38733 
+  760000   0.89783189    16.757716            0    18.104436    205.33302 
+  770000   0.89290436    16.757096            0    18.096426     205.3971 
+  780000   0.89742927    16.754863            0    18.100979     205.5294 
+  790000   0.90210439    16.762679            0    18.115808    205.30088 
+  800000   0.89581954    16.754936            0    18.098638    205.36527 
+Loop time of 40635.6 on 6 procs for 800000 steps with 48996 atoms
+
+Pair  time (%) = 18158.1 (44.6851)
+Bond  time (%) = 318.455 (0.783685)
+Neigh time (%) = 3516.96 (8.65488)
+Comm  time (%) = 4196.78 (10.3278)
+Outpt time (%) = 0.111052 (0.000273287)
+Other time (%) = 14445.2 (35.5482)
+
+Nlocal:    8166 ave 9255 max 7258 min
+Histogram: 1 1 0 2 0 0 0 0 0 2
+Nghost:    11336.7 ave 13561 max 9968 min
+Histogram: 2 2 0 0 0 0 0 0 0 2
+Neighs:    219898 ave 252686 max 192373 min
+Histogram: 1 1 1 1 0 0 0 0 0 2
+
+Total # of neighbors = 1319385
+Ave neighs/atom = 26.9284
+Ave special neighs/atom = 0
+Neighbor list builds = 152144
+Dangerous builds = 0
